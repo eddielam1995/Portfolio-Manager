@@ -1,13 +1,17 @@
 import os
 import numpy as np
 from scipy.stats import norm
-from polygon import StocksClient
 from dotenv import load_dotenv
 import pandas as pd
 
-load_dotenv()
+# Try to import yfinance as fallback
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
 
-client = StocksClient(os.getenv("POLYGON_API_KEY"))
+load_dotenv()
 
 # Your exact portfolio (update shares if you change)
 PORTFOLIO = {
@@ -25,10 +29,19 @@ COLLARS = {
         "put_strike": 300,
         "call_strike": 600,
         "contracts": 5, # 500 shares protected
-        "put_symbol": "O:TSLA281215P00300000", # Polygon format
-        "call_symbol": "O:TSLA281215C00600000",
     }
 }
+
+def get_price_yfinance(ticker):
+    """Get price using yfinance (free, no API key needed)"""
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1d")
+        if len(hist) > 0:
+            return hist['Close'].iloc[-1]
+    except Exception as e:
+        print(f"yfinance error for {ticker}: {e}")
+    return 0
 
 def black_scholes_greeks(S, K, T, r, sigma, option_type="call"):
     """Full Black-Scholes Greeks calculator"""
@@ -50,14 +63,16 @@ def black_scholes_greeks(S, K, T, r, sigma, option_type="call"):
     return {"delta": delta, "gamma": gamma, "theta": theta, "vega": vega, "rho": rho}
 
 def get_portfolio_snapshot():
+    """Get current portfolio snapshot with live prices"""
     data = {}
     total_mv = 0
     net_delta = 0
     
     for ticker, info in PORTFOLIO.items():
-        try:
-            snapshot = client.get_ticker_snapshot(ticker)
-            price = snapshot.last["price"]
+        # Get price using yfinance (free, no API needed)
+        price = get_price_yfinance(ticker)
+        
+        if price > 0:
             mv = info["shares"] * price
             total_mv += mv
             net_delta += info["shares"] # stocks = delta 1.0
@@ -68,8 +83,8 @@ def get_portfolio_snapshot():
                 "shares": info["shares"],
                 "delta_contrib": info["shares"]
             }
-        except Exception as e:
-            print(f"Error fetching {ticker}: {e}")
+        else:
+            # If we can't get price, use a placeholder
             data[ticker] = {
                 "price": 0,
                 "mv": 0,
@@ -82,7 +97,7 @@ def get_portfolio_snapshot():
         tsla_price = data["TSLA"]["price"]
         T = 2.71 # years to Dec 2028
         r = 0.04
-        iv = 0.535 # current live IV for your LEAPs — code can pull exact later
+        iv = 0.535 # current live IV for your LEAPs
         
         # Long put Greeks
         put_g = black_scholes_greeks(tsla_price, 300, T, r, iv, "put")
@@ -90,9 +105,9 @@ def get_portfolio_snapshot():
         call_g = black_scholes_greeks(tsla_price, 600, T, r, iv, "call")
         
         collar_net_delta = (put_g["delta"] - call_g["delta"]) * 500
-        net_delta += collar_net_delta # replaces 500 shares with net option delta
+        net_delta += collar_net_delta
         
-        data["TSLA"]["delta_contrib"] = 100 + collar_net_delta + 500 # 100 naked + collar net
+        data["TSLA"]["delta_contrib"] = 100 + collar_net_delta + 500
     
     return {
         "positions": data,
@@ -101,4 +116,4 @@ def get_portfolio_snapshot():
         "spx_equiv": round(total_mv / 638, 0) # rough SPY equivalent
     }
 
-# For future: add full scenario engine here (copy from our earlier tables)
+# For future: add full scenario engine here

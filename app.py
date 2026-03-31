@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from portfolio import get_portfolio_snapshot
+from portfolio import get_portfolio_snapshot, YFINANCE_AVAILABLE
 from dotenv import load_dotenv
 import os
 from xai_sdk import Client # Grok AI
@@ -12,40 +12,41 @@ load_dotenv()
 polygon_key = os.getenv("POLYGON_API_KEY") or st.secrets.get("POLYGON_API_KEY")
 xai_key = os.getenv("XAI_API_KEY") or st.secrets.get("XAI_API_KEY")
 
-if polygon_key:
-    st.session_state.polygon_key = polygon_key
-if xai_key:
-    st.session_state.xai_key = xai_key
-
 # Initialize clients only if keys exist
-if 'xai_client' not in st.session_state and xai_key:
-    xai_client = Client(api_key=xai_key)
-    st.session_state.xai_client = xai_client
-    st.session_state.xai_connected = True
-else:
-    st.session_state.xai_connected = False
+xai_client = None
+if xai_key:
+    try:
+        xai_client = Client(api_key=xai_key)
+    except Exception as e:
+        st.error(f"Error initializing Grok: {e}")
 
 st.set_page_config(page_title="Jane Street AI Agent — Your Book", layout="wide")
 st.title("🚀 Jane Street AI Trading Agent")
 st.caption("Live Greeks • Scenarios • Risk • AI Advice (exactly like the desk)")
 
 # Show API status
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
+    if YFINANCE_AVAILABLE:
+        st.success("✅ Price Data (yfinance)")
+    else:
+        st.warning("⚠️ yfinance not installed")
+with col2:
     if polygon_key:
         st.success("✅ Polygon.io Connected")
     else:
-        st.error("❌ Polygon API Key Missing")
-with col2:
-    if st.session_state.get('xai_connected'):
+        st.info("ℹ️ Polygon not required (using yfinance)")
+with col3:
+    if xai_client:
         st.success("✅ Grok AI Connected")
     else:
-        st.warning("⚠️ Grok AI Not Connected (check secrets)")
+        st.warning("⚠️ Grok AI Not Connected")
 
 if st.button("🔄 Refresh All Data"):
     st.rerun()
 
-snapshot = get_portfolio_snapshot()
+with st.spinner("Loading portfolio data..."):
+    snapshot = get_portfolio_snapshot()
 
 # Dashboard table
 df = pd.DataFrame.from_dict(snapshot["positions"], orient="index")
@@ -63,8 +64,7 @@ with col2:
 # AI Co-pilot (Grok)
 st.subheader("🤖 AI Jane Street Analyst")
 
-# Only show button if API is connected
-if st.session_state.get('xai_connected'):
+if xai_client:
     if st.button("Get Full Risk Advice"):
         prompt = f"""
 You are a Jane Street trader. Analyze this exact portfolio snapshot:
@@ -73,7 +73,7 @@ Current date: March 31 2026.
 Give concise bullet-point advice on concentration, Greeks, post-April covered-call plan, and any immediate actions.
 Speak exactly like you do in our chat.
 """
-        response = st.session_state.xai_client.chat.completions.create(
+        response = xai_client.chat.completions.create(
             model="grok-2",
             messages=[{"role": "user", "content": prompt}]
         )

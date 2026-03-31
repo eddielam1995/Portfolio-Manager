@@ -7,3 +7,4 @@ plotly
 python-dotenv
 requests
 xai-sdk
+yfinance
