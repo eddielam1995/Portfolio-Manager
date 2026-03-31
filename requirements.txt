@@ -1,0 +1,9 @@
+polygon
+streamlit
+numpy
+scipy
+pandas
+plotly
+python-dotenv
+requests
+xai-sdk
